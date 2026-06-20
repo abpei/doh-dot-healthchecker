@@ -1,0 +1,9 @@
+services:
+  doh-monitor:
+    build: .
+    container_name: doh-monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
