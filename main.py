@@ -126,13 +126,18 @@ def main() -> None:
     # Pre-cache PTR lookups for raw-IP DoT targets so we resolve once, not per cycle.
     for target in targets:
         if target["type"] == "dot" and _is_ip_address(target["host"]):
-            ptr_host = _reverse_dns_lookup(target["host"], cfg["dns_server"])
+            ptr_host, from_cache = _reverse_dns_lookup(target["host"], cfg["dns_server"])
             if ptr_host:
-                logger.info(
-                    "PTR cache: %s -> %s (will be used as TLS SNI)",
-                    target["host"],
-                    ptr_host,
-                )
+                if from_cache:
+                    logger.debug(
+                        "PTR cache hit for %s → %s", target["host"], ptr_host,
+                    )
+                else:
+                    logger.info(
+                        "PTR lookup: %s → %s (will be used as TLS SNI)",
+                        target["host"],
+                        ptr_host,
+                    )
 
     try:
         while True:
