@@ -661,8 +661,9 @@ class TestReverseDnsLookup:
         mock_rdata.target = dns.name.from_text("one.one.one.one.")
         mock_resolver.resolve.return_value = [mock_rdata]
 
-        result = _reverse_dns_lookup("1.1.1.1", "8.8.8.8")
+        result, from_cache = _reverse_dns_lookup("1.1.1.1", "8.8.8.8")
         assert result == "one.one.one.one"
+        assert not from_cache
 
     @patch("dns_probe.dns.resolver.Resolver")
     def test_ptr_strips_trailing_dot(self, MockResolver):
@@ -674,9 +675,10 @@ class TestReverseDnsLookup:
         mock_rdata.target = dns.name.from_text("example.com.")
         mock_resolver.resolve.return_value = [mock_rdata]
 
-        result = _reverse_dns_lookup("93.184.216.34", "8.8.8.8")
+        result, from_cache = _reverse_dns_lookup("93.184.216.34", "8.8.8.8")
         assert result == "example.com"
         assert not result.endswith(".")
+        assert not from_cache
 
     @patch("dns_probe.dns.resolver.Resolver")
     def test_ptr_failure_returns_none(self, MockResolver):
@@ -685,8 +687,9 @@ class TestReverseDnsLookup:
         MockResolver.return_value = mock_resolver
         mock_resolver.resolve.side_effect = dns.resolver.NXDOMAIN()
 
-        result = _reverse_dns_lookup("192.0.2.1", "8.8.8.8")
+        result, from_cache = _reverse_dns_lookup("192.0.2.1", "8.8.8.8")
         assert result is None
+        assert not from_cache
 
     @patch("dns_probe.dns.resolver.Resolver")
     def test_ptr_caches_result(self, MockResolver):
@@ -699,13 +702,15 @@ class TestReverseDnsLookup:
         mock_resolver.resolve.return_value = [mock_rdata]
 
         # First call — hits DNS
-        r1 = _reverse_dns_lookup("10.0.0.1", "8.8.8.8")
+        r1, cache1 = _reverse_dns_lookup("10.0.0.1", "8.8.8.8")
         assert r1 == "cached.host"
+        assert not cache1
         assert mock_resolver.resolve.call_count == 1
 
         # Second call — should use cache
-        r2 = _reverse_dns_lookup("10.0.0.1", "8.8.8.8")
+        r2, cache2 = _reverse_dns_lookup("10.0.0.1", "8.8.8.8")
         assert r2 == "cached.host"
+        assert cache2
         assert mock_resolver.resolve.call_count == 1  # no additional call
 
     @patch("dns_probe.dns.resolver.Resolver")
@@ -718,9 +723,11 @@ class TestReverseDnsLookup:
         mock_rdata.target = dns.name.from_text("fresh.host.")
         mock_resolver.resolve.return_value = [mock_rdata]
 
-        r1 = _reverse_dns_lookup("10.0.0.2", "8.8.8.8", use_cache=False)
+        r1, cache1 = _reverse_dns_lookup("10.0.0.2", "8.8.8.8", use_cache=False)
         assert r1 == "fresh.host"
-        r2 = _reverse_dns_lookup("10.0.0.2", "8.8.8.8", use_cache=False)
+        assert not cache1
+        r2, cache2 = _reverse_dns_lookup("10.0.0.2", "8.8.8.8", use_cache=False)
+        assert not cache2
         assert mock_resolver.resolve.call_count == 2
 
     def test_clear_ptr_cache(self):
@@ -755,7 +762,7 @@ class TestDetermineServerHostname:
     @patch("dns_probe._reverse_dns_lookup")
     def test_ptr_derived_hostname(self, mock_ptr):
         """PTR lookup result is used as server_hostname when no override."""
-        mock_ptr.return_value = "one.one.one.one"
+        mock_ptr.return_value = ("one.one.one.one", False)
         host, ptr = _determine_server_hostname("1.1.1.1", "8.8.8.8", None)
         assert host == "one.one.one.one"
         assert ptr == "one.one.one.one"
@@ -763,7 +770,7 @@ class TestDetermineServerHostname:
     @patch("dns_probe._reverse_dns_lookup")
     def test_ptr_fails_uses_raw_ip(self, mock_ptr):
         """When PTR returns None, raw IP is used as server_hostname."""
-        mock_ptr.return_value = None
+        mock_ptr.return_value = (None, False)
         host, ptr = _determine_server_hostname("188.245.192.196", "8.8.8.8", None)
         assert host == "188.245.192.196"
         assert ptr is None
@@ -801,7 +808,7 @@ class TestProbeDotWithPtr:
     def test_ptr_hostname_used_for_sni(self, mock_conn, mock_resolve, mock_ptr):
         """When PTR returns a hostname, it is used as TLS server_hostname."""
         mock_resolve.return_value = None  # host is already an IP
-        mock_ptr.return_value = "one.one.one.one"
+        mock_ptr.return_value = ("one.one.one.one", False)
 
         inner_sock = MagicMock()
         tls_sock = MagicMock()
@@ -847,7 +854,7 @@ class TestProbeDotWithPtr:
     def test_explicit_hostname_overrides_ptr(self, mock_conn, mock_resolve, mock_ptr):
         """DOT_HOSTNAME override takes priority over PTR lookup."""
         mock_resolve.return_value = None
-        mock_ptr.return_value = "one.one.one.one"  # PTR would return this
+        mock_ptr.return_value = ("one.one.one.one", False)  # PTR would return this
 
         inner_sock = MagicMock()
         tls_sock = MagicMock()
@@ -895,7 +902,7 @@ class TestProbeDotWithPtr:
     def test_ptr_fails_falls_back_to_raw_ip(self, mock_conn, mock_resolve, mock_ptr):
         """When PTR fails, raw IP is used as server_hostname (cert may fail)."""
         mock_resolve.return_value = None
-        mock_ptr.return_value = None
+        mock_ptr.return_value = (None, False)
 
         inner_sock = MagicMock()
         tls_sock = MagicMock()

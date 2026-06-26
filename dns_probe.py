@@ -46,7 +46,7 @@ def _reverse_dns_lookup(
     dns_server: str = "1.1.1.1",
     *,
     use_cache: bool = True,
-) -> Optional[str]:
+) -> tuple[Optional[str], bool]:
     """Perform a PTR (reverse DNS) lookup for the given IP address.
 
     Results are cached in ``_ptr_cache`` so repeated calls for the same
@@ -58,11 +58,12 @@ def _reverse_dns_lookup(
         use_cache: When True (default), return a cached result if available.
 
     Returns:
-        The hostname from the PTR record, or ``None`` on failure / no record.
+        (hostname, from_cache) — hostname from the PTR record (or None),
+        and whether the result was served from cache.
     """
     cache_key = (ip, dns_server)
     if use_cache and cache_key in _ptr_cache:
-        return _ptr_cache[cache_key]
+        return _ptr_cache[cache_key], True
 
     hostname: Optional[str] = None
     try:
@@ -84,7 +85,7 @@ def _reverse_dns_lookup(
     if use_cache:
         _ptr_cache[cache_key] = hostname
 
-    return hostname
+    return hostname, False
 
 
 def clear_ptr_cache() -> None:
@@ -269,13 +270,18 @@ def _determine_server_hostname(
     if not _is_ip_address(host):
         return host, None
 
-    ptr_host = _reverse_dns_lookup(host, dns_server)
+    ptr_host, from_cache = _reverse_dns_lookup(host, dns_server)
     if ptr_host:
-        logger.info(
-            "PTR lookup for %s returned %s — using as TLS server_hostname",
-            host,
-            ptr_host,
-        )
+        if from_cache:
+            logger.debug(
+                "PTR cache hit for %s → %s", host, ptr_host,
+            )
+        else:
+            logger.info(
+                "PTR lookup for %s returned %s — using as TLS server_hostname",
+                host,
+                ptr_host,
+            )
         return ptr_host, ptr_host
 
     logger.warning(
